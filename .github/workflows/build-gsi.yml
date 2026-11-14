@@ -58,12 +58,13 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     env:
-      BUILD_ROOT: ${{ runner.temp }}/lineage-gsi
+      BUILD_ROOT: /home/runner/work/_temp/lineage-gsi
       MIN_FREE_GIB: 400
     steps:
       - name: Reject unsupported resources before syncing
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted || exit 1
+          test "$RUNNER_TEMP" = /home/runner/work/_temp || { echo "Unexpected runner temp path" >&2; exit 1; }
           df -h "$RUNNER_TEMP"; free -h
           available=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print int($4/1048576)}')
           if [ "$available" -lt 400 ]; then
