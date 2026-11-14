@@ -15,6 +15,10 @@ on:
         description: 'Experimental partial clone (incompatible with shallow)'
         type: boolean
         default: false
+      reclaim_space:
+        description: 'Remove selected preinstalled tools on disposable GitHub-hosted VM'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -34,6 +38,7 @@ jobs:
           bash tests/safety.sh
           bash tests/staged-safety.sh
           bash tests/disk-guard.sh
+          bash tests/reclaim-safety.sh
       - name: Report resource limits
         run: |
           df -h "$RUNNER_TEMP"
@@ -81,6 +86,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Reclaim optional preinstalled tool space
+        if: ${{ inputs.reclaim_space }}
+        run: bash scripts/reclaim-hosted-space.sh
       - name: Initialize source workspace
         env:
           STAGE: setup
