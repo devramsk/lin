@@ -7,6 +7,9 @@ ROOT=${BUILD_ROOT:-"$HOME/lineage-gsi-work"}
 INSTALL_DEPS=${INSTALL_DEPS:-1}
 MIN_FREE_GIB=${MIN_FREE_GIB:-0}
 REPO_DEPTH=${REPO_DEPTH:-0}
+REPO_PARTIAL=${REPO_PARTIAL:-0}
+[[ $REPO_PARTIAL == 0 || $REPO_PARTIAL == 1 ]] || { echo 'REPO_PARTIAL must be 0 or 1' >&2; exit 1; }
+[[ $REPO_PARTIAL != 1 || $REPO_DEPTH != 1 ]] || { echo 'REPO_PARTIAL and REPO_DEPTH cannot both be 1' >&2; exit 1; }
 [[ $REPO_DEPTH == 0 || $REPO_DEPTH == 1 ]] || { echo 'REPO_DEPTH must be 0 or 1' >&2; exit 1; }
 [[ $ROOT == /* && $MIN_FREE_GIB =~ ^[0-9]+$ ]] || { echo 'BUILD_ROOT must be absolute; MIN_FREE_GIB must be an integer' >&2; exit 1; }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Linux x86_64 required' >&2; exit 1; }
@@ -14,11 +17,11 @@ mkdir -p "$ROOT"
 ROOT=$(cd "$ROOT" && pwd -P)
 exec 9>"$ROOT/.lock"
 flock -n 9 || { echo 'Build root already in use' >&2; exit 1; }
-if [[ ! -e $ROOT/.lineage-staged-v2 ]]; then
+if [[ ! -e $ROOT/.lineage-staged-v3 ]]; then
   [[ -z $(find "$ROOT" -mindepth 1 -maxdepth 1 ! -name .lock -print -quit) ]] || { echo 'Refusing nonempty unowned BUILD_ROOT' >&2; exit 1; }
-  printf '%s\n%s\n%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH" > "$ROOT/.lineage-staged-v2"
+  printf '%s\n%s\n%s\n%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH" "$REPO_PARTIAL" > "$ROOT/.lineage-staged-v3"
 fi
-[[ $(cat "$ROOT/.lineage-staged-v2") == "$(printf '%s\n%s\n%s' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH")" ]] || { echo 'Build root version mismatch' >&2; exit 1; }
+[[ $(cat "$ROOT/.lineage-staged-v3") == "$(printf '%s\n%s\n%s\n%s' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH" "$REPO_PARTIAL")" ]] || { echo 'Build root version mismatch' >&2; exit 1; }
 mkdir -p "$ROOT/audit/events" "$ROOT/audit/logs" "$ROOT/home/bin" "$ROOT/source"
 export HOME="$ROOT/home" PATH="$ROOT/home/bin:$PATH"
 if [[ ! -d $ROOT/audit/.git ]]; then
@@ -34,7 +37,7 @@ event() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/lineage-event.XXXXXXXX")
   {
     printf 'stage=%s\nstatus=%s\ntime=%s\n' "$stage" "$status" "$(date -u +%FT%TZ)"
-    printf 'build_script=%s\npatches=%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT"
+    printf 'build_script=%s\npatches=%s\nrepo_depth=%s\nrepo_partial=%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH" "$REPO_PARTIAL"
     [[ ! -f $log ]] || sha256sum "$log"
   } > "$tmp"
   target="$ROOT/audit/events/${stage}-${status}-$(date -u +%Y%m%dT%H%M%S)-$$"
@@ -95,6 +98,7 @@ setup() {
   cd "$ROOT/source"
   local depth_args=()
   [[ $REPO_DEPTH == 0 ]] || depth_args=(--depth=1)
+  [[ $REPO_PARTIAL == 0 ]] || depth_args=(--partial-clone --clone-filter=blob:limit=10M)
   repo init -u https://github.com/LOS21-pre-QPR2/android.git -b lineage-21.0 --git-lfs "${depth_args[@]}"
   git clone -b lineage-21-pre-qpr2-light https://github.com/AndyCGYan/lineage_build_unified.git lineage_build_unified
   git -C lineage_build_unified checkout --detach "$BUILD_COMMIT"
@@ -154,7 +158,7 @@ validate() {
   git -C "$ROOT/audit" -c commit.gpgsign=false commit -qm 'Record image hashes'
 }
 GUARD_SCRIPT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/run-with-disk-guard.sh
-export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH
+export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH REPO_PARTIAL
 export -f setup upstream_wrapper sync_sources patch_sources build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &
 monitor=$!

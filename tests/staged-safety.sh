@@ -33,4 +33,12 @@ if BUILD_ROOT="$root/build" REPO_DEPTH=1 INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$sc
   echo 'Accepted a changed workspace depth' >&2; exit 1
 fi
 grep -q 'Build root version mismatch' "$root/log"
+if BUILD_ROOT="$root/invalid2" REPO_DEPTH=1 REPO_PARTIAL=1 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted conflicting clone options' >&2; exit 1
+fi
+grep -q 'REPO_PARTIAL and REPO_DEPTH cannot both be 1' "$root/log"
+if BUILD_ROOT="$root/invalid3" REPO_PARTIAL=bad bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted invalid REPO_PARTIAL' >&2; exit 1
+fi
+grep -q 'REPO_PARTIAL must be 0 or 1' "$root/log"
 echo 'Staged safety checks passed'
