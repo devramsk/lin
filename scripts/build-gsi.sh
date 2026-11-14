@@ -2,7 +2,7 @@
 # Fresh, unsigned LineageOS 21 pre-QPR2 Light GSI build. Run on a dedicated host.
 set -Eeuo pipefail
 
-BUILD_COMMIT=301f406f6d0f213798afffb3be6c367cb8d20f2d
+BUILD_COMMIT=301f406f6d0f213798afffb3be5c367cb8d20f2d
 PATCH_COMMIT=01a11cee86eeef3fffa744c8efa37985d28312fc
 ROOT=${BUILD_ROOT:-"$PWD/lineage-work"}
 INSTALL_DEPS=${INSTALL_DEPS:-1}

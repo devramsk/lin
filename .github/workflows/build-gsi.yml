@@ -3,19 +3,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "probe = free hosted resource check; build = paid larger runner and cache"
+        description: 'probe checks resources and upstream; build attempts the full build if resources permit'
         type: choice
         options: [probe, build]
         default: probe
-      resume_key:
-        description: "Exact previously saved checkpoint cache key (optional; same branch)"
-        type: string
-        required: false
-        default: ""
 permissions:
   contents: read
 concurrency:
-  group: lineage-gsi-github-hosted
+  group: lineage-gsi-free-hosted
   cancel-in-progress: false
 jobs:
   preflight:
@@ -25,164 +20,88 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Check scripts and safety tests
+      - name: Check scripts and safeguards
         run: |
           bash -n scripts/*.sh
           bash tests/safety.sh
           bash tests/staged-safety.sh
-      - name: Report standard GitHub-hosted resources
+      - name: Report resource limits
         run: |
           df -h "$RUNNER_TEMP"
           free -h
-          echo 'This probe cannot build LineageOS; build mode needs a configured GitHub-hosted larger runner and a paid large cache.'
-      - name: Check build configuration
-        if: ${{ inputs.mode == 'build' }}
-        env:
-          LARGER_RUNNER: ${{ vars.LINEAGE_GSI_RUNNER }}
-        run: |
-          : "${LARGER_RUNNER:?Set LINEAGE_GSI_RUNNER to an organization GitHub-hosted larger runner label}"
-  build:
-    if: ${{ inputs.mode == 'build' }}
-    needs: preflight
-    runs-on: ${{ vars.LINEAGE_GSI_RUNNER || 'ubuntu-22.04' }}
-    timeout-minutes: 360
-    env:
-      BUILD_ROOT: /home/runner/work/_temp/lineage-gsi
-      MIN_FREE_GIB: 400
+          printf '%s\n' 'LineageOS recommends roughly 400 GB of free storage; the full build step checks for 400 GiB.' >> "$GITHUB_STEP_SUMMARY"
+  upstream-inventory:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
-      - name: Refuse non-GitHub-hosted runners and incompatible paths
-        run: |
-          test "$RUNNER_ENVIRONMENT" = github-hosted || { echo 'Only GitHub-hosted runners are permitted'; exit 1; }
-          test "$RUNNER_TEMP" = /home/runner/work/_temp || { echo 'Runner path differs from checkpoint path; cannot restore safely'; exit 1; }
-          echo "Free disk before restore:"; df -h "$RUNNER_TEMP"; free -h
-          available=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print int($4/1048576)}')
-          test "$available" -ge 400 || { echo 'At least 400 GiB free is required before restore'; exit 1; }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Restore an exact checkpoint
-        id: restore
-        if: ${{ inputs.resume_key != '' }}
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Inspect pinned upstream repositories and manifest
+        env:
+          AUDIT_OUTPUT: ${{ runner.temp }}/lineage-upstream-audit
+        run: bash scripts/audit-upstream.sh
+      - name: Upload inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          path: /home/runner/work/_temp/lineage-gsi
-          key: ${{ inputs.resume_key }}
-          fail-on-cache-miss: true
-      - name: Confirm exact cache hit
-        if: ${{ inputs.resume_key != '' }}
-        env:
-          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
-        run: test "$CACHE_HIT" = true || { echo 'Refusing partial cache-key match'; exit 1; }
-      - name: Stage setup
-        id: setup
-        timeout-minutes: 300
-        env:
-          STAGE: setup
+          name: upstream-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/lineage-upstream-audit/inventory.txt
+            ${{ runner.temp }}/lineage-upstream-audit/versions.txt
+            ${{ runner.temp }}/lineage-upstream-audit/inventory.bundle
+          if-no-files-found: warn
+          retention-days: 3
+  build:
+    if: ${{ inputs.mode == 'build' }}
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      BUILD_ROOT: ${{ runner.temp }}/lineage-gsi
+      MIN_FREE_GIB: 400
+    steps:
+      - name: Reject unsupported resources before syncing
         run: |
-          if [ -f "$BUILD_ROOT/audit/$STAGE.done" ]; then
-            echo 'ran=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ran=true' >> "$GITHUB_OUTPUT"
+          test "$RUNNER_ENVIRONMENT" = github-hosted || exit 1
+          df -h "$RUNNER_TEMP"; free -h
+          available=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print int($4/1048576)}')
+          if [ "$available" -lt 400 ]; then
+            echo "Build not started: ${available} GiB free; policy requires 400 GiB." >&2
+            echo 'Build not started: insufficient runner disk; no images were produced.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
-          bash scripts/staged-build-gsi.sh
-      - name: Save checkpoint setup
-        if: ${{ steps.setup.outputs.ran == 'true' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: /home/runner/work/_temp/lineage-gsi
-          key: lineage-${{ github.run_id }}-${{ github.run_attempt }}-setup
-      - name: Stage prepare
-        id: prepare
-        timeout-minutes: 300
-        env:
-          STAGE: prepare
-        run: |
-          if [ -f "$BUILD_ROOT/audit/$STAGE.done" ]; then
-            echo 'ran=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ran=true' >> "$GITHUB_OUTPUT"
-          fi
-          bash scripts/staged-build-gsi.sh
-      - name: Save checkpoint prepare
-        if: ${{ steps.prepare.outputs.ran == 'true' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: /home/runner/work/_temp/lineage-gsi
-          key: lineage-${{ github.run_id }}-${{ github.run_attempt }}-prepare
-      - name: Stage build-64VN
-        id: vn
-        timeout-minutes: 300
-        env:
-          STAGE: build-64VN
-        run: |
-          if [ -f "$BUILD_ROOT/audit/$STAGE.done" ]; then
-            echo 'ran=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ran=true' >> "$GITHUB_OUTPUT"
-          fi
-          bash scripts/staged-build-gsi.sh
-      - name: Save checkpoint build-64VN
-        if: ${{ steps.vn.outputs.ran == 'true' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: /home/runner/work/_temp/lineage-gsi
-          key: lineage-${{ github.run_id }}-${{ github.run_attempt }}-build-64VN
-      - name: Stage build-64GN
-        id: gn
-        timeout-minutes: 300
-        env:
-          STAGE: build-64GN
-        run: |
-          if [ -f "$BUILD_ROOT/audit/$STAGE.done" ]; then
-            echo 'ran=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ran=true' >> "$GITHUB_OUTPUT"
-          fi
-          bash scripts/staged-build-gsi.sh
-      - name: Save checkpoint build-64GN
-        if: ${{ steps.gn.outputs.ran == 'true' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: /home/runner/work/_temp/lineage-gsi
-          key: lineage-${{ github.run_id }}-${{ github.run_attempt }}-build-64GN
-      - name: Stage validate
-        id: validate
-        timeout-minutes: 300
-        env:
-          STAGE: validate
-        run: |
-          if [ -f "$BUILD_ROOT/audit/$STAGE.done" ]; then
-            echo 'ran=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ran=true' >> "$GITHUB_OUTPUT"
-          fi
-          bash scripts/staged-build-gsi.sh
-      - name: Prepare audit history for upload
+          persist-credentials: false
+      - name: Run staged preparation and two builds
+        run: bash scripts/staged-build-gsi.sh
+      - name: Bundle audit history
         if: always()
         run: |
           if [ -d "$BUILD_ROOT/audit/.git" ]; then
             git -C "$BUILD_ROOT/audit" bundle create "$BUILD_ROOT/audit-history.bundle" --all || true
           fi
-      - name: Upload logs and audit history
+      - name: Upload audit logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lineage-audit-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            /home/runner/work/_temp/lineage-gsi/audit/logs/
-            /home/runner/work/_temp/lineage-gsi/audit/events/
-            /home/runner/work/_temp/lineage-gsi/audit/resources.log
-            /home/runner/work/_temp/lineage-gsi/audit/resolved-manifest.xml
-            /home/runner/work/_temp/lineage-gsi/audit/SHA256SUMS
-            /home/runner/work/_temp/lineage-gsi/audit-history.bundle
+            ${{ runner.temp }}/lineage-gsi/audit/logs/
+            ${{ runner.temp }}/lineage-gsi/audit/events/
+            ${{ runner.temp }}/lineage-gsi/audit/resources.log
+            ${{ runner.temp }}/lineage-gsi/audit/resolved-manifest.xml
+            ${{ runner.temp }}/lineage-gsi/audit/SHA256SUMS
+            ${{ runner.temp }}/lineage-gsi/audit-history.bundle
           if-no-files-found: warn
-          retention-days: 7
-      - name: Upload both images
+          retention-days: 3
+      - name: Upload images
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
-          path: /home/runner/work/_temp/lineage-gsi/home/build-output/*.img
+          path: ${{ runner.temp }}/lineage-gsi/home/build-output/*.img
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 3
