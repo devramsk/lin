@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - name: Check scripts and safeguards
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - name: Inspect pinned upstream repositories and manifest
@@ -43,7 +43,7 @@ jobs:
         run: bash scripts/audit-upstream.sh
       - name: Upload inventory
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: upstream-inventory-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -62,6 +62,7 @@ jobs:
       MIN_FREE_GIB: 400
     steps:
       - name: Reject unsupported resources before syncing
+        id: resources
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted || exit 1
           test "$RUNNER_TEMP" = /home/runner/work/_temp || { echo "Unexpected runner temp path" >&2; exit 1; }
@@ -72,20 +73,20 @@ jobs:
             echo 'Build not started: insufficient runner disk; no images were produced.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - name: Run staged preparation and two builds
         run: bash scripts/staged-build-gsi.sh
       - name: Bundle audit history
-        if: always()
+        if: ${{ always() && steps.resources.outcome == 'success' }}
         run: |
           if [ -d "$BUILD_ROOT/audit/.git" ]; then
             git -C "$BUILD_ROOT/audit" bundle create "$BUILD_ROOT/audit-history.bundle" --all || true
           fi
       - name: Upload audit logs
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() && steps.resources.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: lineage-audit-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -99,7 +100,7 @@ jobs:
           retention-days: 3
       - name: Upload images
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lineage-gsi/home/build-output/*.img
