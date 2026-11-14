@@ -44,3 +44,5 @@ Workflow использует **только** стандартный GitHub-hos
 Запуск [43602208859](https://github.com/devramsk/lin/actions/runs/43602208859) с `shallow=true` остановился **при sync**: GitHub-аннотация подтверждает, что сработал резерв диска. Компиляция и патчи не начались; даже shallow-режим не обеспечил достаточно места.
 
 Дополнительный эксперимент `partial=true` (без `shallow`) использует `repo init --partial-clone --clone-filter=blob:limit=10M` по [документации AOSP](https://source.android.com/docs/setup/build/downloading). Он откладывает загрузку части Git-объектов, но checkout, Git LFS и последующая сборка всё равно могут потребовать их; экономия места не гарантирована. Отдельно требуется проверка совместимости Gerrit repopick и патчей. Полный checkout и `out/` всё равно должны быть доступны на runner одновременно для `systemimage`. Включать одновременно `partial` и `shallow` скрипт запрещает. Это эксперимент, не решение для переноса checkpoint между VM.
+
+Подробный протокол и условия корректного возобновления: [docs/staged-compilation.md](docs/staged-compilation.md).
