@@ -20,7 +20,7 @@ child=$!
   while kill -0 "$child" 2>/dev/null; do
     available=$(df -Pk "$root" | awk 'NR==2 {print $4}') || exit 0
     if [[ $available =~ ^[0-9]+$ ]] && (( available < reserve * 1048576 )); then
-      echo "Disk guard: stopping stage; available ${available} KiB, reserve ${reserve} GiB" >&2
+      echo "Disk guard: stopping stage; available ${available} KiB, reserve ${reserve} GiB" | tee -a "$log.disk-guard" >&2
       kill -TERM -- "-$child" 2>/dev/null || true
       sleep 5
       kill -KILL -- "-$child" 2>/dev/null || true

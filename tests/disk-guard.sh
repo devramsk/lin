@@ -15,4 +15,5 @@ if DISK_RESERVE_GIB=999999 DISK_GUARD_INTERVAL=1 bash "$script" "$tmp" "$tmp/gua
   echo 'Disk guard did not interrupt the stage' >&2; exit 1
 fi
 grep -q 'Disk guard: stopping stage' "$tmp/guard-output"
+grep -q 'Disk guard: stopping stage' "$tmp/guard.log.disk-guard"
 echo 'Disk guard checks passed'

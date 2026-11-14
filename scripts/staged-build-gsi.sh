@@ -63,6 +63,13 @@ run_stage() {
     rm -f "$active"
   else
     event "$name" failed "$log" || true
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      if [[ -s $log.disk-guard ]]; then
+        echo "::error title=Disk reserve reached::Stage $name stopped by disk guard; see audit logs"
+      else
+        echo "::error title=Build stage failed::Stage $name failed with exit $rc; see audit logs"
+      fi
+    fi
     echo "$name failed (exit $rc), see $log" >&2
     return "$rc"
   fi

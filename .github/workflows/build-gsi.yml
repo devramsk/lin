@@ -71,8 +71,38 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Run staged preparation and two builds
+      - name: Initialize source workspace
+        env:
+          STAGE: setup
         run: bash scripts/staged-build-gsi.sh
+      - name: Sync sources and apply patches
+        env:
+          STAGE: prepare
+        run: bash scripts/staged-build-gsi.sh
+      - name: Build 64VN system image
+        env:
+          STAGE: build-64VN
+        run: bash scripts/staged-build-gsi.sh
+      - name: Build 64GN system image
+        env:
+          STAGE: build-64GN
+        run: bash scripts/staged-build-gsi.sh
+      - name: Verify images and hashes
+        env:
+          STAGE: validate
+        run: bash scripts/staged-build-gsi.sh
+      - name: Summarize completed and failed stages
+        if: ${{ always() && steps.resources.outcome == 'success' }}
+        run: |
+          echo '## Build stage events (metadata, not compiled artifacts)' >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "$BUILD_ROOT/audit/events" ]; then
+            for f in "$BUILD_ROOT"/audit/events/*; do
+              [ -f "$f" ] || continue
+              printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+              printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi
       - name: Bundle audit history
         if: ${{ always() && steps.resources.outcome == 'success' }}
         run: |
