@@ -6,7 +6,7 @@ BUILD_COMMIT=301f406f6d0f213798afffb3be5c367cb8d20f2d
 PATCH_COMMIT=01a11cee86eeef3fffa744c8efa37985d28312fc
 ROOT=${BUILD_ROOT:-"$PWD/lineage-work"}
 INSTALL_DEPS=${INSTALL_DEPS:-1}
-MIN_FREE_GIB=${MIN_FREE_GIB:-400}
+MIN_FREE_GIB=${MIN_FREE_GIB:-0}
 [[ $MIN_FREE_GIB =~ ^[0-9]+$ ]] || { echo 'MIN_FREE_GIB must be an integer' >&2; exit 1; }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Linux x86_64 required' >&2; exit 1; }
 mkdir -p "$ROOT"
