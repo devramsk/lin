@@ -45,7 +45,6 @@ event() {
 run_stage() {
   local name=$1; shift
   local marker="$ROOT/audit/$name.done" active="$ROOT/audit/$name.active" log="$ROOT/audit/logs/$name.log" rc
-  local -a statuses
   [[ ! -f $marker ]] || { echo "Already completed: $name"; return; }
   if [[ -f $active && $name != build-* ]]; then
     echo "Interrupted $name; unsafe to repeat automatically. Inspect $log and use a fresh BUILD_ROOT." >&2
@@ -54,10 +53,8 @@ run_stage() {
   printf 'started %s\n' "$(date -u +%FT%TZ)" > "$active"
   event "$name" started "$log"
   set +e
-  bash -e -o pipefail -c '"$@"' _ "$@" 2>&1 | tee -a "$log"
-  statuses=("${PIPESTATUS[@]}")
-  rc=${statuses[0]}
-  (( statuses[1] == 0 )) || rc=1
+  bash "$GUARD_SCRIPT" "$ROOT" "$log" "$@"
+  rc=$?
   set -e
   if (( rc == 0 )); then
     event "$name" completed "$log"
@@ -134,6 +131,7 @@ validate() {
   git -C "$ROOT/audit" add SHA256SUMS
   git -C "$ROOT/audit" -c commit.gpgsign=false commit -qm 'Record image hashes'
 }
+GUARD_SCRIPT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/run-with-disk-guard.sh
 export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS
 export -f setup prepare build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &

@@ -25,6 +25,7 @@ jobs:
           bash -n scripts/*.sh
           bash tests/safety.sh
           bash tests/staged-safety.sh
+          bash tests/disk-guard.sh
       - name: Report resource limits
         run: |
           df -h "$RUNNER_TEMP"
