@@ -139,10 +139,22 @@ export -f setup prepare build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &
 monitor=$!
 trap 'kill "$monitor" 2>/dev/null || true; wait "$monitor" 2>/dev/null || true' EXIT
-run_stage setup setup
-run_stage prepare prepare
-run_stage build-64VN build_target 64VN
-run_stage build-64GN build_target 64GN
-run_stage validate validate
-sha256sum -c "$ROOT/audit/SHA256SUMS"
+require_stage() {
+  [[ -f "$ROOT/audit/$1.done" ]] || { echo "Missing prerequisite checkpoint: $1" >&2; return 1; }
+}
+case ${STAGE:-all} in
+  setup) run_stage setup setup ;;
+  prepare) require_stage setup; run_stage prepare prepare ;;
+  build-64VN) require_stage prepare; run_stage build-64VN build_target 64VN ;;
+  build-64GN) require_stage build-64VN; run_stage build-64GN build_target 64GN ;;
+  validate) require_stage build-64GN; run_stage validate validate; sha256sum -c "$ROOT/audit/SHA256SUMS" ;;
+  all)
+    run_stage setup setup
+    run_stage prepare prepare
+    run_stage build-64VN build_target 64VN
+    run_stage build-64GN build_target 64GN
+    run_stage validate validate
+    sha256sum -c "$ROOT/audit/SHA256SUMS" ;;
+  *) echo "Unknown STAGE: $STAGE" >&2; exit 1 ;;
+esac
 echo "Images: $HOME/build-output; logs and local audit Git: $ROOT/audit"

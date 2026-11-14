@@ -21,4 +21,8 @@ grep -q 'Interrupted setup' "$root/log"
 if BUILD_ROOT=relative INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
   echo 'Accepted a relative root' >&2; exit 1
 fi
+if BUILD_ROOT="$root/empty" INSTALL_DEPS=0 MIN_FREE_GIB=0 STAGE=prepare bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted prepare without setup' >&2; exit 1
+fi
+grep -q 'Missing prerequisite checkpoint: setup' "$root/log"
 echo 'Staged safety checks passed'
