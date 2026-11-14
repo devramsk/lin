@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(mktemp -d)
+trap 'rm -rf "$root"' EXIT
+script=$(cd "$(dirname "$0")/.." && pwd)/scripts/staged-build-gsi.sh
+mkdir -p "$root/occupied"; echo keep > "$root/occupied/file"
+if BUILD_ROOT="$root/occupied" INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted an unowned root' >&2; exit 1
+fi
+grep -q 'Refusing nonempty unowned' "$root/log"
+if BUILD_ROOT="$root/build" INSTALL_DEPS=0 MIN_FREE_GIB=999999 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted insufficient free space' >&2; exit 1
+fi
+grep -q 'Need 999999 GiB free' "$root/log"
+[[ ! -e "$root/build/audit/setup.done" && -e "$root/build/audit/setup.active" ]]
+[[ $(git -C "$root/build/audit" log --oneline | wc -l) -eq 2 ]]
+if BUILD_ROOT="$root/build" INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
+  echo 'Repeated an unsafe setup' >&2; exit 1
+fi
+grep -q 'Interrupted setup' "$root/log"
+if BUILD_ROOT=relative INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted a relative root' >&2; exit 1
+fi
+echo 'Staged safety checks passed'

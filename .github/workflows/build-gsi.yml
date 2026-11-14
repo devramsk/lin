@@ -7,7 +7,22 @@ concurrency:
   group: lineage-gsi-self-hosted
   cancel-in-progress: false
 jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check scripts and safe failure paths
+        run: |
+          bash -n scripts/*.sh
+          bash tests/safety.sh
+          bash tests/staged-safety.sh
+      - name: Runner instructions
+        run: echo 'Full build requires an online self-hosted runner with labels self-hosted, linux, x64, lineage-gsi and a persistent LINEAGE_BUILD_ROOT repository variable.'
   build:
+    needs: preflight
     # Dedicated, disposable Ubuntu 22.04 x86_64 runner, provisioned by the owner.
     runs-on: [self-hosted, linux, x64, lineage-gsi]
     timeout-minutes: 4320
@@ -17,14 +32,21 @@ jobs:
           persist-credentials: false
       - name: Install dependencies and build both unsigned images
         env:
-          BUILD_ROOT: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bash scripts/build-gsi.sh
+          BUILD_ROOT: ${{ vars.LINEAGE_BUILD_ROOT }}
+        run: |
+          : "${BUILD_ROOT:?Configure repository variable LINEAGE_BUILD_ROOT as an absolute persistent path}"
+          bash scripts/staged-build-gsi.sh
       - name: Upload audit logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lineage-audit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}/audit/
+          path: |
+            ${{ vars.LINEAGE_BUILD_ROOT }}/audit/logs/
+            ${{ vars.LINEAGE_BUILD_ROOT }}/audit/events/
+            ${{ vars.LINEAGE_BUILD_ROOT }}/audit/resources.log
+            ${{ vars.LINEAGE_BUILD_ROOT }}/audit/resolved-manifest.xml
+            ${{ vars.LINEAGE_BUILD_ROOT }}/audit/SHA256SUMS
           if-no-files-found: warn
           retention-days: 7
       - name: Upload images
@@ -32,7 +54,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}/home/build-output/*.img
+          path: ${{ vars.LINEAGE_BUILD_ROOT }}/home/build-output/*.img
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
