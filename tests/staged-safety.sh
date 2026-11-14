@@ -21,8 +21,16 @@ grep -q 'Interrupted setup' "$root/log"
 if BUILD_ROOT=relative INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
   echo 'Accepted a relative root' >&2; exit 1
 fi
-if BUILD_ROOT="$root/empty" INSTALL_DEPS=0 MIN_FREE_GIB=0 STAGE=prepare bash "$script" >"$root/log" 2>&1; then
-  echo 'Accepted prepare without setup' >&2; exit 1
+if BUILD_ROOT="$root/empty" INSTALL_DEPS=0 MIN_FREE_GIB=0 STAGE=sync bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted sync without setup' >&2; exit 1
 fi
 grep -q 'Missing prerequisite checkpoint: setup' "$root/log"
+if BUILD_ROOT="$root/invalid" REPO_DEPTH=2 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted invalid REPO_DEPTH' >&2; exit 1
+fi
+grep -q 'REPO_DEPTH must be 0 or 1' "$root/log"
+if BUILD_ROOT="$root/build" REPO_DEPTH=1 INSTALL_DEPS=0 MIN_FREE_GIB=0 bash "$script" >"$root/log" 2>&1; then
+  echo 'Accepted a changed workspace depth' >&2; exit 1
+fi
+grep -q 'Build root version mismatch' "$root/log"
 echo 'Staged safety checks passed'

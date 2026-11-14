@@ -6,17 +6,19 @@ PATCH_COMMIT=01a11cee86eeef3fffa744c8efa37985d28312fc
 ROOT=${BUILD_ROOT:-"$HOME/lineage-gsi-work"}
 INSTALL_DEPS=${INSTALL_DEPS:-1}
 MIN_FREE_GIB=${MIN_FREE_GIB:-0}
+REPO_DEPTH=${REPO_DEPTH:-0}
+[[ $REPO_DEPTH == 0 || $REPO_DEPTH == 1 ]] || { echo 'REPO_DEPTH must be 0 or 1' >&2; exit 1; }
 [[ $ROOT == /* && $MIN_FREE_GIB =~ ^[0-9]+$ ]] || { echo 'BUILD_ROOT must be absolute; MIN_FREE_GIB must be an integer' >&2; exit 1; }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Linux x86_64 required' >&2; exit 1; }
 mkdir -p "$ROOT"
 ROOT=$(cd "$ROOT" && pwd -P)
 exec 9>"$ROOT/.lock"
 flock -n 9 || { echo 'Build root already in use' >&2; exit 1; }
-if [[ ! -e $ROOT/.lineage-staged-v1 ]]; then
+if [[ ! -e $ROOT/.lineage-staged-v2 ]]; then
   [[ -z $(find "$ROOT" -mindepth 1 -maxdepth 1 ! -name .lock -print -quit) ]] || { echo 'Refusing nonempty unowned BUILD_ROOT' >&2; exit 1; }
-  printf '%s\n%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT" > "$ROOT/.lineage-staged-v1"
+  printf '%s\n%s\n%s\n' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH" > "$ROOT/.lineage-staged-v2"
 fi
-[[ $(cat "$ROOT/.lineage-staged-v1") == "$(printf '%s\n%s' "$BUILD_COMMIT" "$PATCH_COMMIT")" ]] || { echo 'Build root version mismatch' >&2; exit 1; }
+[[ $(cat "$ROOT/.lineage-staged-v2") == "$(printf '%s\n%s\n%s' "$BUILD_COMMIT" "$PATCH_COMMIT" "$REPO_DEPTH")" ]] || { echo 'Build root version mismatch' >&2; exit 1; }
 mkdir -p "$ROOT/audit/events" "$ROOT/audit/logs" "$ROOT/home/bin" "$ROOT/source"
 export HOME="$ROOT/home" PATH="$ROOT/home/bin:$PATH"
 if [[ ! -d $ROOT/audit/.git ]]; then
@@ -91,31 +93,44 @@ setup() {
   curl --fail --location --retry 3 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
   chmod 755 "$HOME/bin/repo"
   cd "$ROOT/source"
-  repo init -u https://github.com/LOS21-pre-QPR2/android.git -b lineage-21.0 --git-lfs
+  local depth_args=()
+  [[ $REPO_DEPTH == 0 ]] || depth_args=(--depth=1)
+  repo init -u https://github.com/LOS21-pre-QPR2/android.git -b lineage-21.0 --git-lfs "${depth_args[@]}"
   git clone -b lineage-21-pre-qpr2-light https://github.com/AndyCGYan/lineage_build_unified.git lineage_build_unified
   git -C lineage_build_unified checkout --detach "$BUILD_COMMIT"
   git clone -b lineage-21-pre-qpr2-light https://github.com/AndyCGYan/lineage_patches_unified.git lineage_patches_unified
   git -C lineage_patches_unified checkout --detach "$PATCH_COMMIT"
 }
-prepare() {
+upstream_wrapper() {
+  local mode=$1 script="$ROOT/audit/upstream-$1.sh"
   cd "$ROOT/source"
   [[ $(git -C lineage_build_unified rev-parse HEAD) == "$BUILD_COMMIT" && $(git -C lineage_patches_unified rev-parse HEAD) == "$PATCH_COMMIT" ]]
-  # Use precisely the function definitions from the pinned upstream script.
-  # Do not execute its main loop here; this is the non-resumable patch stage.
-  local script="$ROOT/audit/upstream-prepare.sh"
   awk '/^if \$\{NOSYNC\}$/ {found=1; exit} {print} END {if (!found) exit 1}' lineage_build_unified/build_unified.sh > "$script"
-  cat >> "$script" <<'EOS'
-prep_build
+  case $mode in
+    sync) printf '%s\n' 'prep_build' >> "$script" ;;
+    patch) cat >> "$script" <<'EOS'
 prep_treble
 apply_patches patches_platform
 apply_patches patches_treble
 finalize_treble
 EOS
+      ;;
+    *) return 1 ;;
+  esac
   printf '\n' | bash "$script" treble 64VN
+}
+sync_sources() {
+  # Upstream's prep_build performs sync AND its Gerrit repopick as a unit.
+  upstream_wrapper sync
+}
+patch_sources() {
+  upstream_wrapper patch
+  cd "$ROOT/source"
   repo manifest -r -o "$ROOT/audit/resolved-manifest.xml"
-  git -C "$ROOT/audit" add upstream-prepare.sh resolved-manifest.xml
+  git -C "$ROOT/audit" add upstream-sync.sh upstream-patch.sh resolved-manifest.xml
   git -C "$ROOT/audit" -c commit.gpgsign=false commit -qm 'Record preparation and resolved manifest'
 }
+
 build_target() {
   local target=$1
   cd "$ROOT/source"
@@ -139,8 +154,8 @@ validate() {
   git -C "$ROOT/audit" -c commit.gpgsign=false commit -qm 'Record image hashes'
 }
 GUARD_SCRIPT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/run-with-disk-guard.sh
-export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS
-export -f setup prepare build_target validate
+export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH
+export -f setup upstream_wrapper sync_sources patch_sources build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &
 monitor=$!
 trap 'kill "$monitor" 2>/dev/null || true; wait "$monitor" 2>/dev/null || true' EXIT
@@ -149,13 +164,15 @@ require_stage() {
 }
 case ${STAGE:-all} in
   setup) run_stage setup setup ;;
-  prepare) require_stage setup; run_stage prepare prepare ;;
-  build-64VN) require_stage prepare; run_stage build-64VN build_target 64VN ;;
+  sync) require_stage setup; run_stage sync sync_sources ;;
+  patch) require_stage sync; run_stage patch patch_sources ;;
+  build-64VN) require_stage patch; run_stage build-64VN build_target 64VN ;;
   build-64GN) require_stage build-64VN; run_stage build-64GN build_target 64GN ;;
   validate) require_stage build-64GN; run_stage validate validate; sha256sum -c "$ROOT/audit/SHA256SUMS" ;;
   all)
     run_stage setup setup
-    run_stage prepare prepare
+    run_stage sync sync_sources
+    run_stage patch patch_sources
     run_stage build-64VN build_target 64VN
     run_stage build-64GN build_target 64GN
     run_stage validate validate

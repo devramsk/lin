@@ -7,6 +7,10 @@ on:
         type: choice
         options: [probe, build]
         default: probe
+      shallow:
+        description: 'Experimental shallow repo sync (can break repopick)'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -61,6 +65,7 @@ jobs:
     env:
       BUILD_ROOT: /home/runner/work/_temp/lineage-gsi
       MIN_FREE_GIB: 0
+      REPO_DEPTH: ${{ inputs.shallow && '1' || '0' }}
     steps:
       - name: Report resources before syncing
         id: resources
@@ -75,9 +80,13 @@ jobs:
         env:
           STAGE: setup
         run: bash scripts/staged-build-gsi.sh
-      - name: Sync sources and apply patches
+      - name: Sync sources and repopick
         env:
-          STAGE: prepare
+          STAGE: sync
+        run: bash scripts/staged-build-gsi.sh
+      - name: Apply patches
+        env:
+          STAGE: patch
         run: bash scripts/staged-build-gsi.sh
       - name: Build 64VN system image
         env:
