@@ -1,0 +1,38 @@
+name: LineageOS 21 pre-QPR2 GSI
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lineage-gsi-self-hosted
+  cancel-in-progress: false
+jobs:
+  build:
+    # Dedicated, disposable Ubuntu 22.04 x86_64 runner, provisioned by the owner.
+    runs-on: [self-hosted, linux, x64, lineage-gsi]
+    timeout-minutes: 4320
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install dependencies and build both unsigned images
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash scripts/build-gsi.sh
+      - name: Upload audit logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lineage-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}/audit/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload images
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}/home/build-output/*.img
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
