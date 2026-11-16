@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
       - name: Check scripts and safeguards
         run: |
-          bash -n scripts/*.sh
+          for script in scripts/*.sh; do bash -n "$script"; done
           bash tests/safety.sh
           bash tests/staged-safety.sh
           bash tests/disk-guard.sh
