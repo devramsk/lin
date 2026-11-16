@@ -7,6 +7,11 @@ on:
         type: choice
         options: [probe, build]
         default: probe
+      ubuntu_version:
+        description: 'Ubuntu version for the build job'
+        type: choice
+        options: [ubuntu-22.04, ubuntu-24.04]
+        default: ubuntu-22.04
       shallow:
         description: 'Experimental shallow repo sync (can break repopick)'
         type: boolean
@@ -26,8 +31,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -39,6 +48,10 @@ jobs:
           bash tests/staged-safety.sh
           bash tests/disk-guard.sh
           bash tests/reclaim-safety.sh
+          bash tests/build-dependencies.sh
+      - name: Install and verify build dependencies
+        if: ${{ inputs.mode == 'probe' }}
+        run: bash scripts/install-build-deps.sh
       - name: Report resource limits
         run: |
           df -h "$RUNNER_TEMP"
@@ -69,7 +82,7 @@ jobs:
   build:
     if: ${{ inputs.mode == 'build' }}
     needs: preflight
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.ubuntu_version || 'ubuntu-22.04' }}
     timeout-minutes: 360
     env:
       BUILD_ROOT: /home/runner/work/_temp/lineage-gsi

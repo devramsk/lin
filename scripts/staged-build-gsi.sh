@@ -84,10 +84,7 @@ setup() {
   free_gib=$(df -Pk "$ROOT" | awk 'NR==2 {print int($4/1048576)}')
   (( free_gib >= MIN_FREE_GIB )) || { echo "Need ${MIN_FREE_GIB} GiB free; available ${free_gib} GiB" >&2; return 1; }
   if [[ $INSTALL_DEPS == 1 ]]; then
-    . /etc/os-release
-    [[ $ID == ubuntu && $VERSION_ID == 22.04 ]] || { echo 'Automatic installation supports Ubuntu 22.04 only' >&2; return 1; }
-    sudo -n apt-get update
-    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y bc bison build-essential ccache curl erofs-utils flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick kmod protobuf-compiler python3-protobuf lib32readline-dev lib32z1-dev lib32ncurses5-dev libncurses5 libncurses5-dev libdw-dev libelf-dev libgnutls28-dev lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc xxd zip unzip zlib1g-dev python-is-python3 ca-certificates patch
+    bash "$DEPS_INSTALLER"
   fi
   git config --global user.name 'Lineage Build'
   git config --global user.email 'lineage-build@localhost'
@@ -157,8 +154,10 @@ validate() {
   git -C "$ROOT/audit" add SHA256SUMS
   git -C "$ROOT/audit" -c commit.gpgsign=false commit -qm 'Record image hashes'
 }
-GUARD_SCRIPT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/run-with-disk-guard.sh
-export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH REPO_PARTIAL
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+GUARD_SCRIPT=$SCRIPT_DIR/run-with-disk-guard.sh
+DEPS_INSTALLER=$SCRIPT_DIR/install-build-deps.sh
+export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH REPO_PARTIAL DEPS_INSTALLER
 export -f setup upstream_wrapper sync_sources patch_sources build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &
 monitor=$!
