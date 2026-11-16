@@ -1,0 +1,8 @@
+stage=setup
+status=completed
+time=2026-11-16T15:13:55Z
+build_script=301f406f6d0f213798afffb3be5c367cb8d20f2d
+patches=01a11cee86eeef3fffa744c8efa37985d28312fc
+repo_depth=0
+repo_partial=0
+3f7dc74cbfb9da7df07c783b41bf5e328071633091e4de049331ea7a88777591  /home/runner/work/_temp/lineage-gsi/audit/logs/setup.log
