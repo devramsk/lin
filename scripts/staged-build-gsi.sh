@@ -5,13 +5,12 @@ BUILD_COMMIT=301f406f6d0f213798afffb3be5c367cb8d20f2d
 PATCH_COMMIT=01a11cee86eeef3fffa744c8efa37985d28312fc
 ROOT=${BUILD_ROOT:-"$HOME/lineage-gsi-work"}
 INSTALL_DEPS=${INSTALL_DEPS:-1}
-MIN_FREE_GIB=${MIN_FREE_GIB:-0}
 REPO_DEPTH=${REPO_DEPTH:-0}
 REPO_PARTIAL=${REPO_PARTIAL:-0}
 [[ $REPO_PARTIAL == 0 || $REPO_PARTIAL == 1 ]] || { echo 'REPO_PARTIAL must be 0 or 1' >&2; exit 1; }
 [[ $REPO_PARTIAL != 1 || $REPO_DEPTH != 1 ]] || { echo 'REPO_PARTIAL and REPO_DEPTH cannot both be 1' >&2; exit 1; }
 [[ $REPO_DEPTH == 0 || $REPO_DEPTH == 1 ]] || { echo 'REPO_DEPTH must be 0 or 1' >&2; exit 1; }
-[[ $ROOT == /* && $MIN_FREE_GIB =~ ^[0-9]+$ ]] || { echo 'BUILD_ROOT must be absolute; MIN_FREE_GIB must be an integer' >&2; exit 1; }
+[[ $ROOT == /* ]] || { echo 'BUILD_ROOT must be absolute' >&2; exit 1; }
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Linux x86_64 required' >&2; exit 1; }
 mkdir -p "$ROOT"
 ROOT=$(cd "$ROOT" && pwd -P)
@@ -51,9 +50,14 @@ run_stage() {
   local name=$1; shift
   local marker="$ROOT/audit/$name.done" active="$ROOT/audit/$name.active" log="$ROOT/audit/logs/$name.log" rc
   [[ ! -f $marker ]] || { echo "Already completed: $name"; return; }
-  if [[ -f $active && $name != build-* ]]; then
-    echo "Interrupted $name; unsafe to repeat automatically. Inspect $log and use a fresh BUILD_ROOT." >&2
+  if [[ -f $active && $name != build-* && ${RESUME_INTERRUPTED:-0} != 1 ]]; then
+    echo "Interrupted $name; unsafe to repeat automatically. Inspect $log and use a fresh BUILD_ROOT," >&2
+    echo "or set RESUME_INTERRUPTED=1 to re-run the interrupted stage explicitly." >&2
     return 1
+  fi
+  if [[ -f $active && ${RESUME_INTERRUPTED:-0} == 1 ]]; then
+    echo "RESUME_INTERRUPTED=1: re-running previously interrupted stage $name" >&2
+    rm -f "$active"
   fi
   printf 'started %s\n' "$(date -u +%FT%TZ)" > "$active"
   event "$name" started "$log"
@@ -80,9 +84,6 @@ run_stage() {
   fi
 }
 setup() {
-  local free_gib
-  free_gib=$(df -Pk "$ROOT" | awk 'NR==2 {print int($4/1048576)}')
-  (( free_gib >= MIN_FREE_GIB )) || { echo "Need ${MIN_FREE_GIB} GiB free; available ${free_gib} GiB" >&2; return 1; }
   if [[ $INSTALL_DEPS == 1 ]]; then
     bash "$DEPS_INSTALLER"
   fi
@@ -157,7 +158,7 @@ validate() {
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 GUARD_SCRIPT=$SCRIPT_DIR/run-with-disk-guard.sh
 DEPS_INSTALLER=$SCRIPT_DIR/install-build-deps.sh
-export ROOT BUILD_COMMIT PATCH_COMMIT MIN_FREE_GIB INSTALL_DEPS REPO_DEPTH REPO_PARTIAL DEPS_INSTALLER
+export ROOT BUILD_COMMIT PATCH_COMMIT INSTALL_DEPS REPO_DEPTH REPO_PARTIAL DEPS_INSTALLER
 export -f setup upstream_wrapper sync_sources patch_sources build_target validate
 ( exec 9>&-; while :; do date -u +%FT%TZ; df -h "$ROOT"; free -h; sleep 60; done ) >> "$ROOT/audit/resources.log" 2>&1 &
 monitor=$!

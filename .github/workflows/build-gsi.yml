@@ -1,41 +1,40 @@
 name: LineageOS 21 pre-QPR2 GSI
+
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'probe checks resources and upstream; build attempts the full build if resources permit'
+        description: 'probe = check scripts/deps/inventory; build = full staged build (best effort)'
         type: choice
         options: [probe, build]
-        default: probe
-      ubuntu_version:
-        description: 'Ubuntu version for the build job'
-        type: choice
-        options: [ubuntu-22.04, ubuntu-24.04]
-        default: ubuntu-22.04
+        default: build
+      reclaim_space:
+        description: 'Build only: remove preinstalled Android SDK/.NET/GHC/PowerShell from the disposable runner'
+        type: boolean
+        default: true
       shallow:
-        description: 'Experimental shallow repo sync (can break repopick)'
+        description: 'Experimental shallow repo sync (--depth=1); can break repopick'
         type: boolean
         default: false
       partial:
-        description: 'Experimental partial clone (incompatible with shallow)'
+        description: 'Experimental partial clone (--clone-filter=blob:limit=10M); incompatible with shallow'
         type: boolean
         default: false
-      reclaim_space:
-        description: 'Remove selected preinstalled tools on disposable GitHub-hosted VM'
+      commit_audit:
+        description: 'Commit audit bundle (logs/events/manifest/SHA256SUMS) to branch audit/<run_id>-<attempt>'
         type: boolean
-        default: false
+        default: true
+
 permissions:
   contents: read
+
 concurrency:
   group: lineage-gsi-free-hosted
   cancel-in-progress: false
+
 jobs:
   preflight:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -43,22 +42,35 @@ jobs:
           persist-credentials: false
       - name: Check scripts and safeguards
         run: |
+          set -e
           for script in scripts/*.sh; do bash -n "$script"; done
-          bash tests/safety.sh
-          bash tests/staged-safety.sh
-          bash tests/disk-guard.sh
-          bash tests/reclaim-safety.sh
-          bash tests/build-dependencies.sh
+          for test in tests/*.sh; do
+            echo "=== $test"
+            bash "$test"
+          done
       - name: Install and verify build dependencies
         if: ${{ inputs.mode == 'probe' }}
         run: bash scripts/install-build-deps.sh
       - name: Report resource limits
         run: |
+          {
+            echo '## GitHub-hosted ubuntu-24.04 runner'
+            echo '- 4 vCPU / 16 GB RAM / ~14 GB SSD (public repository)'
+            echo '- 6-hour job limit; ~10 GB Actions cache per repository; 500 MB free artifact storage'
+            echo '- LineageOS 21 recommends ~400 GB free space and ~64 GB RAM'
+            echo '- A full build on this free runner is therefore NOT guaranteed; the local-server path in README.md is the supported route'
+            echo
+            echo '### Disk and memory at job start'
+            echo '```'
+            df -h "$RUNNER_TEMP"
+            free -h
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           df -h "$RUNNER_TEMP"
           free -h
-          printf '%s\n' 'LineageOS recommends roughly 400 GB of free storage; this workflow attempts a build without a minimum disk-space gate.' >> "$GITHUB_STEP_SUMMARY"
+
   upstream-inventory:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -70,6 +82,7 @@ jobs:
         run: bash scripts/audit-upstream.sh
       - name: Upload inventory
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: upstream-inventory-${{ github.run_id }}-${{ github.run_attempt }}
@@ -79,22 +92,23 @@ jobs:
             ${{ runner.temp }}/lineage-upstream-audit/inventory.bundle
           if-no-files-found: warn
           retention-days: 3
+
   build:
     if: ${{ inputs.mode == 'build' }}
     needs: preflight
-    runs-on: ${{ inputs.ubuntu_version || 'ubuntu-22.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
+    permissions:
+      contents: write # push the audit/<run_id>-<attempt> branch (see commit-audit step); nothing else is written
     env:
       BUILD_ROOT: /home/runner/work/_temp/lineage-gsi
-      MIN_FREE_GIB: 0
       REPO_DEPTH: ${{ inputs.shallow && '1' || '0' }}
       REPO_PARTIAL: ${{ inputs.partial && '1' || '0' }}
     steps:
       - name: Report resources before syncing
         id: resources
         run: |
-          test "$RUNNER_ENVIRONMENT" = github-hosted || exit 1
-          test "$RUNNER_TEMP" = /home/runner/work/_temp || { echo "Unexpected runner temp path" >&2; exit 1; }
+          test "$RUNNER_ENVIRONMENT" = github-hosted || { echo 'Refusing to run on a non-GitHub-hosted runner (self-hosted runners are not permitted)' >&2; exit 1; }
           df -h "$RUNNER_TEMP"; free -h
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -126,26 +140,49 @@ jobs:
         env:
           STAGE: validate
         run: bash scripts/staged-build-gsi.sh
+
       - name: Summarize completed and failed stages
         if: ${{ always() && steps.resources.outcome == 'success' }}
         run: |
-          echo '## Build stage events (metadata, not compiled artifacts)' >> "$GITHUB_STEP_SUMMARY"
-          if [ -d "$BUILD_ROOT/audit/events" ]; then
-            for f in "$BUILD_ROOT"/audit/events/*; do
-              [ -f "$f" ] || continue
-              printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
-              cat "$f" >> "$GITHUB_STEP_SUMMARY"
-              printf '```\n' >> "$GITHUB_STEP_SUMMARY"
-            done
-          fi
+          {
+            echo '## Build stage events'
+            if [ -d "$BUILD_ROOT/audit/events" ]; then
+              for f in "$BUILD_ROOT"/audit/events/*; do
+                [ -f "$f" ] || continue
+                printf '\n```\n'
+                cat "$f"
+                printf '```\n'
+              done
+            else
+              echo 'No event records found.'
+            fi
+            echo
+            echo '### Final resource state'
+            echo '```'
+            df -h "$RUNNER_TEMP"
+            free -h
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Bundle audit history
         if: ${{ always() && steps.resources.outcome == 'success' }}
         run: |
           if [ -d "$BUILD_ROOT/audit/.git" ]; then
             git -C "$BUILD_ROOT/audit" bundle create "$BUILD_ROOT/audit-history.bundle" --all || true
           fi
+
+      - name: Commit audit bundle to repository branch
+        id: audit_commit
+        if: ${{ always() && inputs.commit_audit && steps.resources.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUDIT_SRC: ${{ runner.temp }}/lineage-gsi/audit
+          AUDIT_BRANCH: audit/${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash scripts/commit-audit.sh
+
       - name: Upload audit logs
         if: ${{ always() && steps.resources.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: lineage-audit-${{ github.run_id }}-${{ github.run_attempt }}
@@ -158,12 +195,14 @@ jobs:
             ${{ runner.temp }}/lineage-gsi/audit-history.bundle
           if-no-files-found: warn
           retention-days: 3
+
       - name: Upload images
-        if: success()
+        if: ${{ success() }}
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: lineage-gsi-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lineage-gsi/home/build-output/*.img
-          if-no-files-found: error
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 3

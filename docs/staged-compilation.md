@@ -1,5 +1,11 @@
 # План поэтапной компиляции GSI
 
+> Обновлено 2026-11-16: локальное возобновление реализовано (`scripts/build-gsi.sh` — маркеры
+> `audit/<stage>.done`, авто-принятие корня предыдущего прогона, `STOP_AFTER=deps|init|build|validate`;
+> `scripts/staged-build-gsi.sh` — явный `RESUME_INTERRUPTED=1` для повторного запуска прерванного не-build этапа).
+> В GitHub Actions добавлен коммит аудит-бандла в ветку `audit/<run_id>-<attempt>` (`scripts/commit-audit.sh`).
+> Кросс-job возобновление компиляции по-прежнему **не реализовано** (VM одноразовая, кэш 10 GB, диск ~14 GB).
+
 ## Что уже подтверждено
 
 - [43593537771](https://github.com/devramsk/lin/actions/runs/43593537771): runner исчерпал диск и не смог выгрузить сборочные журналы. Источник ошибки — GitHub check annotation `No space left on device`.
